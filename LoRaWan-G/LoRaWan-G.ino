@@ -13,8 +13,48 @@
  * */
 
 #include "LoRaWan_APP.h"
+#include <Arduino.h>
 
-/* OTAA para*/
+#include "WiFi.h"
+
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+#include <BLEEddystoneURL.h>
+#include <BLEEddystoneTLM.h>
+#include <BLEBeacon.h>
+#include <set>
+#include <string>
+
+/* BLE & WiFi Setup */
+
+int scanTime = 1;  //In seconds
+BLEScan *pBLEScan;
+
+std::set<String> macListWifi;
+std::set<String> ssidListWifi;
+
+std::set<String> macListBle;
+
+int BLE_SEUIL_MIN = 50;
+int BLE_SEUIL_MAX = 100;
+int WIFI_SEUIL_MIN = 5;
+int WIFI_SEUIL_MAX = 15;
+
+float BLE_RATIO = 0.8;
+float WIFI_RATIO = 1-BLE_RATIO;
+
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    String macBle = advertisedDevice.getAddress().toString();
+    macListBle.insert(macBle);
+  }
+
+
+};
+
+/* LoRa Setup */
 uint8_t devEui[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x06, 0x53, 0xC8 };
 uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t appKey[] = { 0x15, 0xEF, 0x60, 0x44, 0xDB, 0x3B, 0x4C, 0x7B, 0xE9, 0x80, 0xE6, 0x9D, 0x2B, 0xE2, 0xC5, 0x77 };
@@ -73,7 +113,7 @@ uint8_t appPort = 2;
 uint8_t confirmedNbTrials = 4;
 
 /* Prepares the payload of the frame */
-static void prepareTxFrame( uint8_t port )
+static void prepareTxFrame( int macBLE, int macWiFi, int ssidWiFi, int crowded = 0, bool moving = false, int rssiDevice = 0 )
 {
   /*appData size is LORAWAN_APP_DATA_MAX_SIZE which is defined in "commissioning.h".
   *appDataSize max value is LORAWAN_APP_DATA_MAX_SIZE.
@@ -82,11 +122,24 @@ static void prepareTxFrame( uint8_t port )
   *for example, if use REGION_CN470, 
   *the max value for different DR can be found in MaxPayloadOfDatarateCN470 refer to DataratesCN470 and BandwidthsCN470 in "RegionCN470.h".
   */
-    appDataSize = 4;
-    appData[0] = 0x00;
-    appData[1] = 0x01;
-    appData[2] = 0x02;
-    appData[3] = 0x03;
+    appDataSize = 12;
+    appData[0] = highByte(macBLE);
+    appData[1] = lowByte(macBLE);
+
+    appData[2] = highByte(macWiFi);
+    appData[3] = lowByte(macWiFi);
+
+    appData[4] = highByte(ssidWiFi);
+    appData[5] = lowByte(ssidWiFi);
+
+    appData[6] = highByte(crowded);
+    appData[7] = lowByte(crowded);
+
+    appData[8] = highByte(moving);
+    appData[9] = lowByte(moving);
+
+    appData[10] = highByte(rssiDevice);
+    appData[11] = lowByte(rssiDevice);
 }
 
 //if true, next uplink will add MOTE_MAC_DEVICE_TIME_REQ 
@@ -95,6 +148,19 @@ static void prepareTxFrame( uint8_t port )
 void setup() {
   Serial.begin(115200);
   Mcu.begin(HELTEC_BOARD,SLOW_CLK_TPYE);
+
+  BLEDevice::init("");
+  pBLEScan = BLEDevice::getScan();  //create new scan
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(false);  //active scan uses more power, but get results faster
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(99);  // less or equal setInterval value
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  Serial.println("Setup done");
 }
 
 void loop()
@@ -118,7 +184,121 @@ void loop()
     }
     case DEVICE_STATE_SEND:
     {
-      prepareTxFrame( appPort );
+      // Partie BLE
+
+      Serial.println("Scan Ble Starting... ");
+      macListBle.clear();
+      BLEScanResults *foundDevices = pBLEScan->start(scanTime, false);
+      int macBLE = (int) macListBle.size();
+
+      Serial.print("Nombre total de MAC unique détectées: ");
+      Serial.println(macBLE);
+      Serial.println("Scan Ble done!");
+      pBLEScan->clearResults(); // delete results fromBLEScan buffer to release memory 
+      delay(100);
+
+      // Partie WiFi
+
+      Serial.println("Scan Wifi Starting...");
+      macListWifi.clear();
+      ssidListWifi.clear();
+      
+      // WiFi.scanNetworks will return the number of networks found.
+      int n = WiFi.scanNetworks();
+
+      int macWiFi = 0;
+      int ssidWiFi = 0;
+
+      if (n == 0) {
+        Serial.println("no networks found");
+      } else {
+        Serial.print(n);
+        Serial.println(" networks found");
+        Serial.println("Nr | MAC                              | SSID                             | RSSI | CH | Encryption");
+        for (int i = 0; i < n; ++i) {
+          // Print SSID and RSSI for each network found
+          Serial.printf("%2d", i + 1);
+          Serial.print(" | ");
+          String macWifi = WiFi.BSSIDstr(i);
+          Serial.printf("%-32.32s", macWifi.c_str());
+          Serial.print(" | ");
+          String ssidWifi = WiFi.SSID(i);
+          Serial.printf("%-32.32s", ssidWifi.c_str());
+          Serial.print(" | ");
+          Serial.printf("%4ld", WiFi.RSSI(i));
+          Serial.print(" | ");
+          Serial.printf("%2ld", WiFi.channel(i));
+        
+          
+          Serial.print(" | ");
+          switch (WiFi.encryptionType(i)) {
+            case WIFI_AUTH_OPEN:            Serial.print("open"); break;
+            case WIFI_AUTH_WEP:             Serial.print("WEP"); break;
+            case WIFI_AUTH_WPA_PSK:         Serial.print("WPA"); break;
+            case WIFI_AUTH_WPA2_PSK:        Serial.print("WPA2"); break;
+            case WIFI_AUTH_WPA_WPA2_PSK:    Serial.print("WPA+WPA2"); break;
+            case WIFI_AUTH_WPA2_ENTERPRISE: Serial.print("WPA2-EAP"); break;
+            case WIFI_AUTH_WPA3_PSK:        Serial.print("WPA3"); break;
+            case WIFI_AUTH_WPA2_WPA3_PSK:   Serial.print("WPA2+WPA3"); break;
+            case WIFI_AUTH_WAPI_PSK:        Serial.print("WAPI"); break;
+            default:                        Serial.print("unknown");
+          }
+          Serial.println();
+          macListWifi.insert(macWifi);
+          ssidListWifi.insert(ssidWifi);
+          delay(10);
+        }
+
+      
+        macWiFi = (int) macListWifi.size();
+        ssidWiFi = (int) ssidListWifi.size();
+        Serial.print("Nombre total de MAC unique détectées: ");
+        Serial.println(macWiFi);
+        Serial.print("Nombre total de SSID unique détectées: ");
+        Serial.println(ssidWiFi);
+      }
+      Serial.println("Scan Wifi done");
+
+      // Delete the scan result to free memory for code below.
+      WiFi.scanDelete();
+
+      // Wait a bit before scanning again.
+      delay(100);
+      int crowdedBLE = 0;
+
+      if (macBLE >= BLE_SEUIL_MAX) {
+        crowdedBLE = 3;
+      } 
+      else if (macBLE >= BLE_SEUIL_MIN) {
+        crowdedBLE = 2;
+      } 
+      else {
+        crowdedBLE = 1;
+      }
+
+      int crowdedWiFi = 0;
+
+      if (ssidWiFi >= WIFI_SEUIL_MAX) {
+        crowdedWiFi = 3;
+      } 
+      else if (ssidWiFi >= WIFI_SEUIL_MIN) {
+        crowdedWiFi = 2;
+      } 
+      else {
+        crowdedWiFi = 1;
+      }
+
+      int meanCrowded = round(BLE_RATIO*crowdedBLE + WIFI_RATIO*crowdedWiFi);
+      Serial.print("Crowded BLE :");
+      Serial.print(crowdedBLE);
+      Serial.print(", Crowded WiFi :");
+      Serial.print(crowdedWiFi);
+      Serial.print(", Valeur moyenne :");
+      Serial.print((float) BLE_RATIO*crowdedBLE + WIFI_RATIO*crowdedWiFi);
+      Serial.print(", Valeur envoyée :");
+      Serial.println(meanCrowded);
+
+      prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded);
       LoRaWAN.send();
       deviceState = DEVICE_STATE_CYCLE;
       break;
