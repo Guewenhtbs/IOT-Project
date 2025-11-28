@@ -72,7 +72,7 @@ void loop() {
   Serial.println("Scan done!");
 
   Serial.print("Nombre total de MAC unique détectées: ");
-  Serial.println(macList.size());
+  Serial.println(macList.size()); 
 
   String mac = "c8:a1:dc:92:3c:1c";
 
