@@ -18,6 +18,9 @@
 #include "WiFi.h"
 #include "LoRa_conf.h"
 
+#include <Wire.h>  
+#include "HT_SSD1306Wire.h"
+
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
@@ -27,6 +30,26 @@
 #include <BLEBeacon.h>
 #include <set>
 #include <string>
+
+/* LCD Setup */
+
+#ifdef WIRELESS_STICK_V3
+static SSD1306Wire  display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_64_32, RST_OLED); // addr , freq , i2c group , resolution , rst
+#else
+static SSD1306Wire  display(0x3c, 500000, SDA_OLED, SCL_OLED, GEOMETRY_128_64, RST_OLED); // addr , freq , i2c group , resolution , rst
+#endif
+
+void VextON(void)
+{
+  pinMode(Vext,OUTPUT);
+  digitalWrite(Vext, LOW);
+}
+
+void VextOFF(void) //Vext default OFF
+{
+  pinMode(Vext,OUTPUT);
+  digitalWrite(Vext, HIGH);
+}
 
 /* BLE & WiFi Setup */
 
@@ -161,7 +184,20 @@ void setup() {
   WiFi.disconnect();
   delay(100);
 
+  VextON();
+  delay(100);
+
+  display.init();
+  display.clear();
+  display.display();
+  
+  display.setContrast(255);
+
+  display.drawString(10, 10, "Setup done");
+  display.display();
+
   Serial.println("Setup done");
+  delay(1000);
 }
 
 void loop()
@@ -186,8 +222,10 @@ void loop()
     case DEVICE_STATE_SEND:
     {
       // Partie BLE
-
-      Serial.println("Scan Ble Starting... ");
+      display.clear();
+      display.drawString(10, 10, "Scan BLE Starting...");
+      display.display();
+      Serial.println("Scan BLE Starting... ");
       macListBle.clear();
       BLEScanResults *foundDevices = pBLEScan->start(scanTime, false);
       int macBLE = (int) macListBle.size();
@@ -200,7 +238,9 @@ void loop()
 
       // Partie WiFi
 
-      Serial.println("Scan Wifi Starting...");
+      display.drawString(10, 30, "Scan WiFi Starting...");
+      display.display();
+      Serial.println("Scan WiFi Starting...");
       macListWifi.clear();
       ssidListWifi.clear();
       
@@ -299,7 +339,17 @@ void loop()
       Serial.print(", Valeur envoyée :");
       Serial.println(meanCrowded);
 
+      display.clear();
+      display.drawString(5, 10, "macBLE: " + String(macBLE));
+      display.drawString(5, 30, "macWiFi: " + String(macWiFi) + ", ssidWiFi: " + String(ssidWiFi));
+      display.drawString(5, 50, "crowdLevel: " + String(meanCrowded));
+      display.display();
+      delay(5000);
+
       prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded);
+
+
+
       LoRaWAN.send();
       deviceState = DEVICE_STATE_CYCLE;
       break;
