@@ -1,17 +1,3 @@
-/* Heltec Automation LoRaWAN communication example
- *
- * Function:
- * 1. Upload node data to the server using the standard LoRaWAN protocol.
- *  
- * Description:
- * 1. Communicate using LoRaWAN protocol.
- * 
- * HelTec AutoMation, Chengdu, China
- * 成都惠利特自动化科技有限公司
- * www.heltec.org
- *
- * */
-
 #include "LoRaWan_APP.h"
 
 /* OTAA para*/
