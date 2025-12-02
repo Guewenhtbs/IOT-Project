@@ -53,13 +53,14 @@ void VextOFF(void) //Vext default OFF
 
 /* BLE & WiFi Setup */
 
-int scanTime = 1;  //In seconds
+int scanTime = 3;  //In seconds
 BLEScan *pBLEScan;
 
 std::set<String> macListWifi;
 std::set<String> ssidListWifi;
 
 std::set<String> macListBle;
+int beaconRssiBle = 0;
 
 int BLE_SEUIL_MIN = 50;
 int BLE_SEUIL_MAX = 100;
@@ -73,6 +74,14 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     String macBle = advertisedDevice.getAddress().toString();
     macListBle.insert(macBle);
+    if (advertisedDevice.haveName() && advertisedDevice.getName() == "GUEWENN") {
+      beaconRssiBle = advertisedDevice.getRSSI();
+      Serial.print("Beacon found, RSSI : ");
+      Serial.println(beaconRssiBle);
+    }
+    if (advertisedDevice.haveName()) {
+      Serial.println(advertisedDevice.getName());
+    }
   }
 
 
@@ -227,6 +236,7 @@ void loop()
       display.display();
       Serial.println("Scan BLE Starting... ");
       macListBle.clear();
+      beaconRssiBle = 0;
       BLEScanResults *foundDevices = pBLEScan->start(scanTime, false);
       int macBLE = (int) macListBle.size();
 
@@ -346,9 +356,7 @@ void loop()
       display.display();
       delay(5000);
 
-      prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded);
-
-
+      prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded, false, abs(beaconRssiBle));
 
       LoRaWAN.send();
       deviceState = DEVICE_STATE_CYCLE;
