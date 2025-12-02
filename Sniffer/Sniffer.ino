@@ -67,7 +67,7 @@ int BLE_SEUIL_MAX = 100;
 int WIFI_SEUIL_MIN = 5;
 int WIFI_SEUIL_MAX = 15;
 
-float BLE_RATIO = 0.8;
+float BLE_RATIO = 0.5;
 float WIFI_RATIO = 1-BLE_RATIO;
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
