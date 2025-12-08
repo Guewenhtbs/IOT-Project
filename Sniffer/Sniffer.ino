@@ -17,6 +17,7 @@
 
 #include "WiFi.h"
 #include "LoRa_conf.h"
+#include "Images.h"
 
 #include <Wire.h>  
 #include "HT_SSD1306Wire.h"
@@ -53,22 +54,26 @@ void VextOFF(void) //Vext default OFF
 
 /* BLE & WiFi Setup */
 
-int scanTime = 3;  //In seconds
+int scanTime = 1;  //In seconds
 BLEScan *pBLEScan;
 
 std::set<String> macListWifi;
+std::set<String> macListWifi_p;
 std::set<String> ssidListWifi;
 
 std::set<String> macListBle;
-int beaconRssiBle = 0;
+int beaconRssiBle = -100;
+
+bool moving = false;
 
 int BLE_SEUIL_MIN = 50;
 int BLE_SEUIL_MAX = 100;
 int WIFI_SEUIL_MIN = 5;
 int WIFI_SEUIL_MAX = 15;
 
-float BLE_RATIO = 0.5;
+float BLE_RATIO = 1;
 float WIFI_RATIO = 1-BLE_RATIO;
+float MOVING_RATIO = 0.5;
 
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
@@ -79,12 +84,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       Serial.print("Beacon found, RSSI : ");
       Serial.println(beaconRssiBle);
     }
-    if (advertisedDevice.haveName()) {
-      Serial.println(advertisedDevice.getName());
-    }
   }
-
-
 };
 
 /* LoRa Setup */
@@ -110,7 +110,7 @@ LoRaMacRegion_t loraWanRegion = ACTIVE_REGION;
 DeviceClass_t  loraWanClass = CLASS_A;
 
 /*the application data transmission duty cycle.  value in [ms].*/
-uint32_t appTxDutyCycle = 15000;
+uint32_t appTxDutyCycle = 50000;
 
 /*OTAA or ABP*/
 bool overTheAirActivation = true;
@@ -175,8 +175,146 @@ static void prepareTxFrame( int macBLE, int macWiFi, int ssidWiFi, int crowded =
     appData[11] = lowByte(rssiDevice);
 }
 
-//if true, next uplink will add MOTE_MAC_DEVICE_TIME_REQ 
+static void display_join() {
+  display.clear();
+  display.drawXbm(
+    (display.width()-3*Crowded_width)/4,
+    (display.height()-Crowded_height)/2+5,
+    Crowded_width,
+    Crowded_height,
+    scan
+  );
+  display.drawString(50, 30, "LoRa Joining");
+  display.display();
+}
 
+static void display_scan() {
+  display.clear();
+  display.drawXbm(
+    (display.width()-3*Scan_width)/4,
+    (display.height()-Scan_height)/2+5,
+    Scan_width,
+    Scan_height,
+    scan
+  );
+  display.drawString(50, 30, "Scaning");
+  display.display();
+}
+
+static void display_ble(int macBLE) {
+  display.clear();
+  display.drawXbm(
+    (display.width()-3*BLE_width)/4,
+    (display.height()-BLE_height)/2+5,
+    BLE_width,
+    BLE_height,
+    ble
+  );
+  display.drawString(50, 30, "BLE devices: " + String(macBLE));
+  display.display();
+}
+
+static void display_wifi(int macWiFi, int ssidWiFi) {
+  display.clear();
+  display.drawXbm(
+    (display.width()-3*WiFi_width)/4,
+    (display.height()-WiFi_height)/2+5,
+    WiFi_width,
+    WiFi_height,
+    wifi
+  );
+  display.drawString(50, 20, "WiFi APs: " + String(macWiFi));
+  display.drawString(50, 40, "WiFi SSIDs: " + String(ssidWiFi));
+  display.display();
+}
+
+static void display_crowded(int crowded) {
+  display.clear();
+  switch ( crowded )  {
+    case 3 : {
+      display.drawXbm(
+        (display.width()-3*Crowded_width)/4,
+        (display.height()-Crowded_height)/2+5,
+        Crowded_width,
+        Crowded_height,
+        crowded_3
+      );
+      display.drawString(50, 30, "Crowded");
+      break;
+    }
+    case 2 : {
+      display.drawXbm(
+        (display.width()-3*Crowded_width)/4,
+        (display.height()-Crowded_height)/2+5,
+        Crowded_width,
+        Crowded_height,
+        crowded_2
+      );
+      display.drawString(50, 30, "Moderate");
+      break;
+    }
+    default : {
+      display.drawXbm(
+        (display.width()-3*Crowded_width)/4,
+        (display.height()-Crowded_height)/2+5,
+        Crowded_width,
+        Crowded_height,
+        crowded_1
+      );
+      display.drawString(50, 30, "Calm");
+      break;
+    }
+  }
+  display.display();
+}
+
+static void display_beacon(int rssiDevice) {
+  display.clear();
+  if (rssiDevice <= -100) {
+    display.drawXbm(
+      (display.width()-3*Visible_width)/4,
+      (display.height()-Visible_height)/2+5,
+      Visible_width,
+      Visible_height,
+      hidden
+    );
+    display.drawString(50, 30, "Beacon hidden");
+  } else {
+    display.drawXbm(
+      (display.width()-3*Visible_width)/4,
+      (display.height()-Visible_height)/2+5,
+      Visible_width,
+      Visible_height,
+      visible
+    );
+    display.drawString(50, 30, "RSSI: " + String(rssiDevice) + "dBm");
+  }
+  display.display();
+}
+
+static void display_position(bool moving) {
+  display.clear();
+  if (moving) {
+    display.drawXbm(
+      (display.width()-3*Position_width)/4,
+      (display.height()-Position_height)/2+5,
+      Position_width,
+      Position_height,
+      movinq
+    );
+    display.drawString(50, 30, "Mobile");
+  } else {
+    display.drawXbm(
+      (display.width()-3*Position_width)/4,
+      (display.height()-Position_height)/2+5,
+      Position_width,
+      Position_height,
+      statiq
+    );
+    display.drawString(50, 30, "Static");
+  }
+  display.display();
+}
 
 void setup() {
   Serial.begin(115200);
@@ -202,8 +340,7 @@ void setup() {
   
   display.setContrast(255);
 
-  display.drawString(10, 10, "Setup done");
-  display.display();
+  display_join();
 
   Serial.println("Setup done");
   delay(1000);
@@ -230,13 +367,12 @@ void loop()
     }
     case DEVICE_STATE_SEND:
     {
+      display_scan();
+
       // Partie BLE
-      display.clear();
-      display.drawString(10, 10, "Scan BLE Starting...");
-      display.display();
       Serial.println("Scan BLE Starting... ");
       macListBle.clear();
-      beaconRssiBle = 0;
+      beaconRssiBle = -100;
       BLEScanResults *foundDevices = pBLEScan->start(scanTime, false);
       int macBLE = (int) macListBle.size();
 
@@ -247,10 +383,7 @@ void loop()
       delay(100);
 
       // Partie WiFi
-
-      display.drawString(10, 30, "Scan WiFi Starting...");
-      display.display();
-      Serial.println("Scan WiFi Starting...");
+      macListWifi.swap(macListWifi_p);
       macListWifi.clear();
       ssidListWifi.clear();
       
@@ -259,6 +392,7 @@ void loop()
 
       int macWiFi = 0;
       int ssidWiFi = 0;
+      int sameMacCounter = 0;
 
       if (n == 0) {
         Serial.println("no networks found");
@@ -270,11 +404,11 @@ void loop()
           // Print SSID and RSSI for each network found
           Serial.printf("%2d", i + 1);
           Serial.print(" | ");
-          String macWifi = WiFi.BSSIDstr(i);
-          Serial.printf("%-32.32s", macWifi.c_str());
+          String macWifiString = WiFi.BSSIDstr(i);
+          Serial.printf("%-32.32s", macWifiString.c_str());
           Serial.print(" | ");
-          String ssidWifi = WiFi.SSID(i);
-          Serial.printf("%-32.32s", ssidWifi.c_str());
+          String ssidWifiString = WiFi.SSID(i);
+          Serial.printf("%-32.32s", ssidWifiString.c_str());
           Serial.print(" | ");
           Serial.printf("%4ld", WiFi.RSSI(i));
           Serial.print(" | ");
@@ -295,18 +429,30 @@ void loop()
             default:                        Serial.print("unknown");
           }
           Serial.println();
-          macListWifi.insert(macWifi);
-          ssidListWifi.insert(ssidWifi);
+          macListWifi.insert(macWifiString);
+          ssidListWifi.insert(ssidWifiString);
+          if (macListWifi_p.contains(macWifiString)) {
+            sameMacCounter++;
+          }
           delay(10);
         }
 
       
         macWiFi = (int) macListWifi.size();
         ssidWiFi = (int) ssidListWifi.size();
+        Serial.println(sameMacCounter);
+        Serial.println((int) macListWifi_p.size());
+        moving = (sameMacCounter < (int) macListWifi_p.size() * MOVING_RATIO);
         Serial.print("Nombre total de MAC unique détectées: ");
         Serial.println(macWiFi);
         Serial.print("Nombre total de SSID unique détectées: ");
         Serial.println(ssidWiFi);
+        if (moving) {
+          Serial.println("L'environnement est en mouvement");
+        } else {
+          Serial.println("L'environnement est statique");
+        }
+        
       }
       Serial.println("Scan Wifi done");
 
@@ -349,14 +495,27 @@ void loop()
       Serial.print(", Valeur envoyée :");
       Serial.println(meanCrowded);
 
-      display.clear();
-      display.drawString(5, 10, "macBLE: " + String(macBLE));
-      display.drawString(5, 30, "macWiFi: " + String(macWiFi) + ", ssidWiFi: " + String(ssidWiFi));
-      display.drawString(5, 50, "crowdLevel: " + String(meanCrowded));
-      display.display();
+      // display.clear();
+      // display.drawString(5, 10, "macBLE: " + String(macBLE));
+      // display.drawString(5, 30, "macWiFi: " + String(macWiFi) + ", ssidWiFi: " + String(ssidWiFi));
+      // if (moving) {
+      //   display.drawString(5, 50, "crowdLevel: " + String(meanCrowded) + ", moving");
+      // } else {
+      //   display.drawString(5, 50, "crowdLevel: " + String(meanCrowded) + ", static");
+      // }
+      // display.display();
+      display_ble(macBLE);
+      delay(5000);
+      display_wifi(macWiFi, ssidWiFi);
+      delay(5000);
+      display_crowded(meanCrowded);
+      delay(5000);
+      display_beacon(beaconRssiBle);
+      delay(5000);
+      display_position(moving);
       delay(5000);
 
-      prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded, false, abs(beaconRssiBle));
+      prepareTxFrame(macBLE, macWiFi, ssidWiFi, meanCrowded, moving, abs(beaconRssiBle));
 
       LoRaWAN.send();
       deviceState = DEVICE_STATE_CYCLE;
