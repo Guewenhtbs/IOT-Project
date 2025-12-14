@@ -80,7 +80,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     String macBle = advertisedDevice.getAddress().toString();
     macListBle.insert(macBle);
-    if (advertisedDevice.haveName() && advertisedDevice.getName() == "GUEWENN") {
+    if (advertisedDevice.haveName() && advertisedDevice.getName() == "ESP32-Mister-T") {
       beaconRssiBle = advertisedDevice.getRSSI();
       Serial.print("Beacon found, RSSI : ");
       Serial.println(beaconRssiBle);
