@@ -58,8 +58,8 @@ int scanTime = 1;  //In seconds
 BLEScan *pBLEScan;
 
 std::set<String> macListWifi;
-std::set<String> macListWifi_p;
 std::set<String> ssidListWifi;
+int sameMacCounter = 0;
 
 std::set<String> macListBle;
 int beaconRssiBle = -100;
@@ -75,6 +75,7 @@ float BLE_RATIO = 1;
 float WIFI_RATIO = 1-BLE_RATIO;
 float MOVING_RATIO = 0.5;
 
+/* For BLE Scan */
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     String macBle = advertisedDevice.getAddress().toString();
@@ -87,12 +88,61 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   }
 };
 
+/* For WiFi Scan */
+static void wifiscanning(bool firstScan) {
+  // WiFi.scanNetworks will return the number of networks found.
+  int n = WiFi.scanNetworks();
+
+  if (n == 0) {
+    Serial.println("no networks found");
+  } else {
+    Serial.print(n);
+    Serial.println(" networks found");
+    Serial.println("Nr | MAC                              | SSID                             | RSSI | CH | Encryption");
+    for (int i = 0; i < n; ++i) {
+      // Print SSID and RSSI for each network found
+      Serial.printf("%2d", i + 1);
+      Serial.print(" | ");
+      String macWifiString = WiFi.BSSIDstr(i);
+      Serial.printf("%-32.32s", macWifiString.c_str());
+      Serial.print(" | ");
+      String ssidWifiString = WiFi.SSID(i);
+      Serial.printf("%-32.32s", ssidWifiString.c_str());
+      Serial.print(" | ");
+      Serial.printf("%4ld", WiFi.RSSI(i));
+      Serial.print(" | ");
+      Serial.printf("%2ld", WiFi.channel(i));
+      Serial.print(" | ");
+      switch (WiFi.encryptionType(i)) {
+        case WIFI_AUTH_OPEN:            Serial.print("open"); break;
+        case WIFI_AUTH_WEP:             Serial.print("WEP"); break;
+        case WIFI_AUTH_WPA_PSK:         Serial.print("WPA"); break;
+        case WIFI_AUTH_WPA2_PSK:        Serial.print("WPA2"); break;
+        case WIFI_AUTH_WPA_WPA2_PSK:    Serial.print("WPA+WPA2"); break;
+        case WIFI_AUTH_WPA2_ENTERPRISE: Serial.print("WPA2-EAP"); break;
+        case WIFI_AUTH_WPA3_PSK:        Serial.print("WPA3"); break;
+        case WIFI_AUTH_WPA2_WPA3_PSK:   Serial.print("WPA2+WPA3"); break;
+        case WIFI_AUTH_WAPI_PSK:        Serial.print("WAPI"); break;
+        default:                        Serial.print("unknown");
+      }
+      Serial.println();
+
+      if (firstScan) {
+        macListWifi.insert(macWifiString);
+        ssidListWifi.insert(ssidWifiString);
+      } else {
+        if (macListWifi.contains(macWifiString)) {
+          sameMacCounter++;
+        }
+      }
+      delay(10);
+    }
+  }  
+}
+
 /* LoRa Setup */
 uint8_t devEui[] = { 0x70, 0xB3, 0xD5, 0x7E, 0xD0, 0x06, 0x53, 0xC8 };
 uint8_t appEui[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
-
-/* devEui A19E139C0000D8B0 */
 
 
 /* ABP para*/
@@ -146,15 +196,8 @@ uint8_t appPort = 2;
 uint8_t confirmedNbTrials = 4;
 
 /* Prepares the payload of the frame */
-static void prepareTxFrame( int macBLE, int macWiFi, int ssidWiFi, int crowded = 0, bool moving = false, int rssiDevice = 0 )
+static void prepareTxFrame( int macBLE, int macWiFi, int ssidWiFi, int crowded = 0, bool moving = false, int rssiDevice = 100 )
 {
-  /*appData size is LORAWAN_APP_DATA_MAX_SIZE which is defined in "commissioning.h".
-  *appDataSize max value is LORAWAN_APP_DATA_MAX_SIZE.
-  *if enabled AT, don't modify LORAWAN_APP_DATA_MAX_SIZE, it may cause system hanging or failure.
-  *if disabled AT, LORAWAN_APP_DATA_MAX_SIZE can be modified, the max value is reference to lorawan region and SF.
-  *for example, if use REGION_CN470, 
-  *the max value for different DR can be found in MaxPayloadOfDatarateCN470 refer to DataratesCN470 and BandwidthsCN470 in "RegionCN470.h".
-  */
     appDataSize = 12;
     appData[0] = highByte(macBLE);
     appData[1] = lowByte(macBLE);
@@ -175,6 +218,8 @@ static void prepareTxFrame( int macBLE, int macWiFi, int ssidWiFi, int crowded =
     appData[11] = lowByte(rssiDevice);
 }
 
+
+/* Display information about LoRa joining */
 static void display_join() {
   display.clear();
   display.drawXbm(
@@ -188,6 +233,7 @@ static void display_join() {
   display.display();
 }
 
+/* Display information about scanning */
 static void display_scan() {
   display.clear();
   display.drawXbm(
@@ -197,10 +243,11 @@ static void display_scan() {
     Scan_height,
     scan
   );
-  display.drawString(50, 30, "Scaning");
+  display.drawString(50, 30, "scanning");
   display.display();
 }
 
+/* Display BLE informations */
 static void display_ble(int macBLE) {
   display.clear();
   display.drawXbm(
@@ -214,6 +261,7 @@ static void display_ble(int macBLE) {
   display.display();
 }
 
+/* Display WiFi informations */
 static void display_wifi(int macWiFi, int ssidWiFi) {
   display.clear();
   display.drawXbm(
@@ -228,6 +276,7 @@ static void display_wifi(int macWiFi, int ssidWiFi) {
   display.display();
 }
 
+/* Display Crowd Level informations */
 static void display_crowded(int crowded) {
   display.clear();
   switch ( crowded )  {
@@ -268,6 +317,7 @@ static void display_crowded(int crowded) {
   display.display();
 }
 
+/* Display beacon tracking informations */
 static void display_beacon(int rssiDevice) {
   display.clear();
   if (rssiDevice <= -100) {
@@ -292,6 +342,7 @@ static void display_beacon(int rssiDevice) {
   display.display();
 }
 
+/* Display mobility informations */
 static void display_position(bool moving) {
   display.clear();
   if (moving) {
@@ -383,77 +434,21 @@ void loop()
       delay(100);
 
       // Partie WiFi
-      macListWifi.swap(macListWifi_p);
       macListWifi.clear();
       ssidListWifi.clear();
       
-      // WiFi.scanNetworks will return the number of networks found.
-      int n = WiFi.scanNetworks();
-
       int macWiFi = 0;
       int ssidWiFi = 0;
-      int sameMacCounter = 0;
 
-      if (n == 0) {
-        Serial.println("no networks found");
-      } else {
-        Serial.print(n);
-        Serial.println(" networks found");
-        Serial.println("Nr | MAC                              | SSID                             | RSSI | CH | Encryption");
-        for (int i = 0; i < n; ++i) {
-          // Print SSID and RSSI for each network found
-          Serial.printf("%2d", i + 1);
-          Serial.print(" | ");
-          String macWifiString = WiFi.BSSIDstr(i);
-          Serial.printf("%-32.32s", macWifiString.c_str());
-          Serial.print(" | ");
-          String ssidWifiString = WiFi.SSID(i);
-          Serial.printf("%-32.32s", ssidWifiString.c_str());
-          Serial.print(" | ");
-          Serial.printf("%4ld", WiFi.RSSI(i));
-          Serial.print(" | ");
-          Serial.printf("%2ld", WiFi.channel(i));
-        
-          
-          Serial.print(" | ");
-          switch (WiFi.encryptionType(i)) {
-            case WIFI_AUTH_OPEN:            Serial.print("open"); break;
-            case WIFI_AUTH_WEP:             Serial.print("WEP"); break;
-            case WIFI_AUTH_WPA_PSK:         Serial.print("WPA"); break;
-            case WIFI_AUTH_WPA2_PSK:        Serial.print("WPA2"); break;
-            case WIFI_AUTH_WPA_WPA2_PSK:    Serial.print("WPA+WPA2"); break;
-            case WIFI_AUTH_WPA2_ENTERPRISE: Serial.print("WPA2-EAP"); break;
-            case WIFI_AUTH_WPA3_PSK:        Serial.print("WPA3"); break;
-            case WIFI_AUTH_WPA2_WPA3_PSK:   Serial.print("WPA2+WPA3"); break;
-            case WIFI_AUTH_WAPI_PSK:        Serial.print("WAPI"); break;
-            default:                        Serial.print("unknown");
-          }
-          Serial.println();
-          macListWifi.insert(macWifiString);
-          ssidListWifi.insert(ssidWifiString);
-          if (macListWifi_p.contains(macWifiString)) {
-            sameMacCounter++;
-          }
-          delay(10);
-        }
+      wifiscanning(true);
 
-      
-        macWiFi = (int) macListWifi.size();
-        ssidWiFi = (int) ssidListWifi.size();
-        Serial.println(sameMacCounter);
-        Serial.println((int) macListWifi_p.size());
-        moving = (sameMacCounter < (int) macListWifi_p.size() * MOVING_RATIO);
-        Serial.print("Nombre total de MAC unique détectées: ");
-        Serial.println(macWiFi);
-        Serial.print("Nombre total de SSID unique détectées: ");
-        Serial.println(ssidWiFi);
-        if (moving) {
-          Serial.println("L'environnement est en mouvement");
-        } else {
-          Serial.println("L'environnement est statique");
-        }
-        
-      }
+      macWiFi = (int) macListWifi.size();
+      ssidWiFi = (int) ssidListWifi.size();
+      Serial.print("Nombre total de MAC unique détectées: ");
+      Serial.println(macWiFi);
+      Serial.print("Nombre total de SSID unique détectées: ");
+      Serial.println(ssidWiFi);
+
       Serial.println("Scan Wifi done");
 
       // Delete the scan result to free memory for code below.
@@ -494,16 +489,6 @@ void loop()
       Serial.print((float) BLE_RATIO*crowdedBLE + WIFI_RATIO*crowdedWiFi);
       Serial.print(", Valeur envoyée :");
       Serial.println(meanCrowded);
-
-      // display.clear();
-      // display.drawString(5, 10, "macBLE: " + String(macBLE));
-      // display.drawString(5, 30, "macWiFi: " + String(macWiFi) + ", ssidWiFi: " + String(ssidWiFi));
-      // if (moving) {
-      //   display.drawString(5, 50, "crowdLevel: " + String(meanCrowded) + ", moving");
-      // } else {
-      //   display.drawString(5, 50, "crowdLevel: " + String(meanCrowded) + ", static");
-      // }
-      // display.display();
       display_ble(macBLE);
       delay(5000);
       display_wifi(macWiFi, ssidWiFi);
@@ -512,6 +497,25 @@ void loop()
       delay(5000);
       display_beacon(beaconRssiBle);
       delay(5000);
+      display_scan();
+      sameMacCounter = 0;
+      wifiscanning(false);
+
+      Serial.println(sameMacCounter);
+      Serial.println((int) macListWifi.size());
+      moving = (sameMacCounter < (int) macListWifi.size() * MOVING_RATIO);
+      if (moving) {
+        Serial.println("L'environnement est en mouvement");
+      } else {
+        Serial.println("L'environnement est statique");
+      }
+
+      // Delete the scan result to free memory for code below.
+      WiFi.scanDelete();
+
+      // Wait a bit before scanning again.
+      delay(100);
+
       display_position(moving);
       delay(5000);
 
